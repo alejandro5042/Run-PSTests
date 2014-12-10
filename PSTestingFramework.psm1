@@ -1,4 +1,6 @@
 
+# TODO: Do isolation per module.
+
 function Assert-Fail 
 {
     [System.Diagnostics.DebuggerStepThroughAttribute()]
@@ -29,7 +31,7 @@ function Assert-True
 
 # $messages = @()
 
-function Invoke-FunctionIfExists($Function, $AlternateFunction)
+function Invoke-FunctionIfExists($Function, $AlternateFunction, [switch]$ThrowExceptions)
 {
     try
     {
@@ -44,7 +46,14 @@ function Invoke-FunctionIfExists($Function, $AlternateFunction)
     }
     catch
     {
-        $_
+        if ($ThrowExceptions)
+        {
+            throw $_
+        }
+        else
+        {
+            $_
+        }
     }
 }
 
@@ -66,8 +75,7 @@ function Run-Tests
     {
         try
         {
-            Remove-Module $testModulePath -Force -ErrorAction SilentlyContinue
-            $testModule = Import-Module $testModulePath -PassThru -DisableNameChecking -Verbose:$false
+            $testModule = Import-Module $testModulePath -Force -PassThru -DisableNameChecking -Verbose:$false
             
             $beginTesting = $testModule.ExportedCommands["TestFramework-BeginTesting"]
             $endTesting = $testModule.ExportedCommands["TestFramework-EndTesting"]
@@ -75,10 +83,14 @@ function Run-Tests
             
             try
             {
-                $tests = @($testModule.ExportedCommands.Values | where Name -like "Test-*" | where Name -match $Filter)
+                $tests = @(
+                    $testModule.ExportedCommands.Values |
+                    where Name -like "Test-*" |
+                    where Name -match $Filter
+                )
                 
                 Write-Verbose "Executing Module: $($testModule.Name)"
-                Invoke-FunctionIfExists $beginTesting
+                Invoke-FunctionIfExists $beginTesting -ThrowExceptions
                 
                 $i = 0
                 foreach ($test in $tests)
@@ -87,34 +99,53 @@ function Run-Tests
                     
                     Write-Verbose "  - Test ($i/$($tests.Length)): $($test.Name)"
                     
-                    $start = [DateTime]::Now
-                    $error = Invoke-FunctionIfExists $runTest { & $args[0] } $test
-                    $duration = [DateTime]::Now - $start
+                    [void]($test -match "--(.*)$")
+                    $attributes = $Matches[1]
                     
-                    if ($error)
+                    $outcome = "Completed"
+                    $passed = $true
+                    $exception = $null
+                    
+                    $start = [DateTime]::Now
+                    
+                    if ($attributes -eq "Ignored")
+                    {
+                        $outcome = "Ignored"
+                    }
+                    else
+                    {                    
+                        $exception = Invoke-FunctionIfExists $runTest { & $args[0] } $test
+                    }
+                    
+                    $end = [DateTime]::Now
+                    
+                    if ($exception)
                     {
                         Write-Verbose "    ** $($test.Name) Failed! **"
+                        $outcome = "Exception"
+                        $passed = $false
                     }
                     
-                    $result = [PSCustomObject]@{
+                    [PSCustomObject]@{
                         Module = $testModule.Name;
                         Test = $test.Name;
-                        Error = $error;
-                        Duration = $duration
+                        Passed = $passed;
+                        Outcome = $outcome;
+                        Exception = $exception;
+                        StartTime = $start;
+                        EndTime = $end;
+                        Duration = $end - $start
                     }
-                    
-                    $result | Add-Member ScriptProperty Passed { $this.Error -eq $null }
-                    $result
                 }
             }
             finally
             {
-                Invoke-FunctionIfExists $endTesting
+                Invoke-FunctionIfExists $endTesting -ThrowExceptions
             }
         }
         finally
         {
-            Remove-Module $testModulePath -ErrorAction SilentlyContinue
+            $testModule | Remove-Module -Force
         }
     }
 }

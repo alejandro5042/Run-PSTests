@@ -5,7 +5,7 @@ function TestFramework-RunTest ($Test)
     [void](& $Test)
 }
 
-function Test-GoodMath
+function Test-GoodMath2--Ignored
 {
     Assert-True (2+2 -eq 4)
 }
